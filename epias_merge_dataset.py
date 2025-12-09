@@ -104,3 +104,7 @@ existing_drop = [col for col in drop_list if col in df_final.columns]
 if existing_drop:
     df_final.drop(columns=existing_drop, inplace=True)
 
+#---------------------------
+# KAYIT
+#---------------------------
+df_final.to_csv('EPIAS_.csv', index=False)
