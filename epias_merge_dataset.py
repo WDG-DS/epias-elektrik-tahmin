@@ -1,3 +1,5 @@
+from statistics import quantiles
+
 import pandas as pd
 import seaborn as sns
 import matplotlib.pyplot as plt
@@ -131,3 +133,90 @@ if existing_drop:
 #---------------------------
 df_final.to_csv('EPIAS_.csv', index=False)
 df_final.head()
+
+
+#---------------------------
+# EDA
+#---------------------------
+
+def data_summary(dataframe, head=5):
+    print("######### Shape ########")
+    print(dataframe.shape)
+    print("######### Type ########")
+    print(dataframe.dtypes)
+    print("######### Head #######")
+    print(dataframe.head(head))
+    print("######### Tail #######")
+    print(dataframe.tail(head))
+    print("######### Nan #######")
+    print(dataframe.isnull().sum())
+
+data_summary(df_final)
+
+def degisken_analiz(dataframe, cat_th=10, car_th=20):
+    # cat_cols, cat_but_car
+    cat_cols = [col for col in dataframe.columns if dataframe[col].dtypes == "O"]
+    num_but_cat = [col for col in dataframe.columns if
+                   dataframe[col].nunique() < cat_th and dataframe[col].dtypes != "O"]
+    cat_but_car = [col for col in dataframe.columns if
+                   dataframe[col].nunique() > car_th and dataframe[col].dtypes == "O"]
+    cat_cols = cat_cols + num_but_cat
+    cat_cols = [col for col in cat_cols if col not in cat_but_car]
+
+    # num_cols
+    num_cols = [col for col in dataframe.columns if dataframe[col].dtypes != "O"]
+    num_cols = [col for col in num_cols if col not in num_but_cat]
+
+    print(f"Observations: {dataframe.shape[0]}")
+    print(f"Variables: {dataframe.shape[1]}")
+    print(f'cat_cols: {len(cat_cols)}')
+    print(f'num_cols: {len(num_cols)}')
+    print(f'cat_but_car: {len(cat_but_car)}')
+    print(f'num_but_cat: {len(num_but_cat)}')
+
+    return cat_cols, num_cols, cat_but_car
+cat_cols, num_cols, cat_but_car = degisken_analiz(df_final)
+
+def numeric_summary(dataframe, numerical_col, plot=False):
+    quantiles = [0.05, 0.10, 0.20, 0.30, 0.40, 0.50, 0.60, 0.70, 0.80, 0.90, 0.95, 0.99]
+    print(dataframe[numerical_col].describe(quantiles).T)
+    if plot:
+        dataframe[numerical_col].hist(bins=20)
+        plt.xlabel(numerical_col)
+        plt.title(numerical_col)
+        plt.show()
+
+
+
+print("\n--- NUMERİK DEĞİŞKENLERİN DAĞILIMI ---")
+for col in num_cols:
+    numeric_summary(df_final, numerical_col=col, plot=True)
+
+#---------------------------
+# Target
+#---------------------------
+
+def target_summary_with_numeric(dataframe, target, numerical_col):
+    print(dataframe.groupby(target).agg({numerical_col: "mean"}), end="\n\n\n")
+
+for col in num_cols:
+    target_summary_with_numeric(df_final, "PTF (TL/MWh)", col)
+#---------------------------
+# Korelasyon
+#---------------------------
+
+df_final[num_cols].corr()
+
+f, ax = plt.subplots(figsize=[18,13])
+sns.heatmap(df_final[num_cols].corr(), annot=True, fmt=".2f", ax=ax, cmap="magma")
+ax.set_title("Correlation Matrix", fontsize=20)
+plt.show(block = True)
+
+
+
+
+
+
+
+
+
