@@ -8,7 +8,10 @@ import matplotlib.pyplot as plt
 import warnings
 import yfinance as yf
 from sklearn.exceptions import ConvergenceWarning
-
+from scipy import stats
+from scipy.stats import norm
+import statsmodels.api as sm
+from statsmodels.tsa.stattools import adfuller
 # ---------------------------
 # AYARLAR
 # ---------------------------
@@ -247,8 +250,50 @@ df_final['PTF (TL/MWH)'].describe().T
 sayi = (df_final['PTF (TL/MWH)'] == 99999.000).sum()
 print(f"99999.000 değeri {sayi} kez geçiyor.")
 
+#---------------------------
+# NORMALLİK TESTİ
+#---------------------------
+# Veriyi normalize ederek K-S testi yapalım
+ptf_clean = df_final['PTF (TL/MWH)'].dropna()
+ks_stat, p_value_ks = stats.kstest((ptf_clean - ptf_clean.mean()) / ptf_clean.std(), 'norm')
 
+print(f"K-S Testi p-değeri: {p_value_ks}")
 
+plt.figure(figsize=(10, 6))
+# Gerçek verinin dağılımı
+sns.histplot(df_final['PTF (TL/MWH)'], kde=True, stat="density", color='skyblue', label='Gerçek Dağılım')
 
+# İdeal Normal Dağılım eğrisi (Karşılaştırma için)
+mu, std = df_final['PTF (TL/MWH)'].mean(), df_final['PTF (TL/MWH)'].std()
+xmin, xmax = plt.xlim()
+x = np.linspace(xmin, xmax, 100)
+p = norm.pdf(x, mu, std)
+plt.plot(x, p, 'r', linewidth=2, label='Teorik Normal Dağılım')
+
+plt.title('PTF Dağılımı vs Teorik Normal Dağılım')
+plt.legend()
+plt.show()
+
+fig = sm.qqplot(df_final['PTF (TL/MWH)'].dropna(), line='s')
+plt.title('PTF İçin Q-Q Plot')
+plt.show()
+
+print(f"Skewness (Çarpıklık): {df_final['PTF (TL/MWH)'].skew()}")
+print(f"Kurtosis (Basıklık): {df_final['PTF (TL/MWH)'].kurt()}")
+
+# ADF Testini çalıştır
+# autolag='AIC' parametresi en iyi gecikme (lag) sayısını otomatik seçer
+adf_test = adfuller(df_final['PTF (TL/MWH)'].dropna(), autolag='AIC')
+
+print(f"ADF İstatistiği: {adf_test[0]}")
+print(f"p-değeri: {adf_test[1]}")
+print("Kritik Değerler:")
+for key, value in adf_test[4].items():
+    print(f"\t{key}: {value}")
+
+if adf_test[1] <= 0.05:
+    print("\nSonuç: p <= 0.05. H0 reddedilir. Seri DURAĞANDIR.")
+else:
+    print("\nSonuç: p > 0.05. H0 reddedilemez. Seri DURAĞAN DEĞİLDİR (Trend var).")
 
 
