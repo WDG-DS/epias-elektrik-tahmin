@@ -8,9 +8,6 @@ import yfinance as yf
 from sklearn.exceptions import ConvergenceWarning
 import datetime
 import locale
-
-from statsmodels.tsa.statespace.sarimax import SARIMAX
-
 # ---------------------------
 # AYARLAR
 # ---------------------------
@@ -25,7 +22,7 @@ pd.set_option('display.float_format', lambda x: '%.3f' % x)
 # ---------------------------
 # VERİ OKUMA
 # ---------------------------
-df_final = pd.read_excel("güncel_set.xlsx")
+df_final = pd.read_excel("data_s/güncel_set.xlsx")
 df_final.head(20)
 # ---------------------------
 # DEĞİŞKEN TİPİ DÜZELTME
@@ -399,90 +396,3 @@ df_final['Is_Peak_Hour'] = df_final['Saat'].apply(lambda x: 1 if 8 <= x <= 20 el
 df_final['Is_Business_Day'] = 1 - df_final['Is_Holiday']
 
 df_final.head(200)
-
-
-
-from xgboost import XGBRegressor
-from statsmodels.tsa.statespace.sarimax import SARIMAX
-
-# Veriyi önce tarihe, sonra saate göre sıralıyoruz
-df_final.sort_values(by=['Tarih', 'Saat'], ascending=True, inplace=True)
-df_final.reset_index(drop=True, inplace=True)
-
-print("Veri başarıyla sıralandı.")
-
-# 1. Lag Features (1 Saat, 1 Gün, 2 Gün, 1 Hafta)
-df_final = lag_features(df_final, [1, 24, 48, 168])
-
-# 2. Rolling Mean (Son 6, 24 ve 168 saatin ortalaması)
-df_final = roll_mean_features(df_final, [6, 24, 168])
-
-# 3. EWM (Üstel Ağırlıklı Ortalama)
-alphas = [0.95, 0.7, 0.5, 0.1]
-lags = [24, 168]
-df_final = ewm_features(df_final, alphas, lags)
-
-print(f"Yeni özellikler eklendi. Toplam sütun sayısı: {len(df_final.columns)}")
-
-# XGBoost için kullanılacak özellikler (Her şeyi veriyoruz)
-xgb_features = [col for col in df_final.columns if col not in ['Tarih', 'PTF (TL/MWH)']]
-
-# SARIMAX için dışsal (exogenous) değişkenler (Sadece harici etkiler)
-sarimax_exog = ['Dolar_Kuru', 'dogalgaz_fiyatlari_Mwh', 'Yük Tahmin Planı (MWh)',
-                'Is_Holiday', 'Is_Peak_Hour', 'YENILENEBILIR_ORANI']
-
-# Boş satırları temizlemeden önce kaç satır kaybedeceğimizi görelim
-old_shape = df_final.shape[0]
-
-# NaN değerleri temizle
-df_final.dropna(inplace=True)
-df_final.reset_index(drop=True, inplace=True)
-
-new_shape = df_final.shape[0]
-print(f"NaN temizliği yapıldı. Silinen satır sayısı: {old_shape - new_shape}")
-
-#Modelin aşırı öğrenmesini (overfitting) engellemek için gecikmeli verilere küçük gürültüler ekleriz.
-def random_noise(dataframe):
-    return np.random.normal(scale=1.5, size=(len(dataframe),))
-
-#def lag_features(dataframe, lags):
-    for lag in lags:
-        # Elektrik verisinde store/item olmadığı için doğrudan PTF üzerinden gidiyoruz
-        dataframe['PTF_lag_' + str(lag)] = dataframe['PTF (TL/MWH)'].shift(lag) + random_noise(dataframe)
-    return dataframe
-
-# Elektrik piyasası için anlamlı lag'ler: 1 saat, 24 saat (1 gün), 48 saat (2 gün), 168 saat (1 hafta)
-def lag_features(dataframe, lags):
-    for lag in lags:
-        # Elektrik verisinde store/item olmadığı için doğrudan PTF üzerinden gidiyoruz
-        dataframe['PTF_lag_' + str(lag)] = dataframe['PTF (TL/MWH)'].shift(lag) + random_noise(dataframe)
-    return dataframe
-
-# Elektrik piyasası için anlamlı lag'ler: 1 saat, 24 saat (1 gün), 48 saat (2 gün), 168 saat (1 hafta)
-df_final = lag_features(df_final, [1, 2, 24, 48, 168])
-
-#3.Hareketli Ortalama (Rolling Mean) Fiyatın son birkaç gündeki genel seviyesini (momentumunu) yakalamak için kullanılır.
-
-def roll_mean_features(dataframe, windows):
-    for window in windows:
-        # shift(1) yapıyoruz çünkü tahmin anında o saatin fiyatını henüz bilmiyoruz
-        dataframe['PTF_roll_mean_' + str(window)] = dataframe['PTF (TL/MWH)'].shift(1). \
-            rolling(window=window, min_periods=5).mean() + random_noise(dataframe)
-    return dataframe
-
-# 6 saatlik, 24 saatlik ve 1 haftalık hareketli ortalamalar
-df_final = roll_mean_features(df_final, [6, 24, 168])
-
-#EWM, yakın geçmişteki verilere daha fazla ağırlık vererek fiyat trendini çok daha hassas yakalar. Elektrik fiyatları gibi oynak (volatil) verilerde en iyi çalışan özelliklerden biridir.
-def ewm_features(dataframe, alphas, lags):
-    for alpha in alphas:
-        for lag in lags:
-            column_name = 'PTF_ewm_alpha_' + str(alpha).replace(".", "") + "_lag_" + str(lag)
-            dataframe[column_name] = dataframe['PTF (TL/MWH)'].shift(lag).ewm(alpha=alpha).mean()
-    return dataframe
-
-# Alpha yüksekse (0.9 gibi) en yakın saate, düşükse (0.1 gibi) daha uzak geçmişe odaklanır
-alphas = [0.95, 0.7, 0.5, 0.1]
-lags = [24, 168] # 1 gün ve 1 hafta önceki verilerin EWM değerleri
-
-df_final = ewm_features(df_final, alphas, lags)

@@ -4,154 +4,99 @@ import pandas as pd
 import seaborn as sns
 import matplotlib.pyplot as plt
 import warnings
-import glob
 import yfinance as yf
 from sklearn.exceptions import ConvergenceWarning
 import datetime
 import locale
-
+# ---------------------------
+# AYARLAR
+# ---------------------------
 warnings.filterwarnings("ignore")
-pd.set_option('display.max_columns', None)
-
-
-
 warnings.simplefilter(action='ignore', category=FutureWarning)
 warnings.simplefilter(action="ignore", category=ConvergenceWarning)
 
 pd.set_option('display.max_columns', None)
-#pd.set_option('display.max_rows', None)
 pd.set_option('display.width', 500)
 pd.set_option('display.float_format', lambda x: '%.3f' % x)
 
-
-######---------------------------
-# VERİ SETİ OKUMA
-#---------------------------
-
-
-ptf_df = pd.read_csv("data_s/Piyasa_Takas_Fiyati(PTF).csv", sep=";")
-yuk_df = pd.read_csv("data_s/Yuk_Tahmin_Plani.csv", sep=";")
-kgup_files = [
-    "data_s/Kesinlesmis_Gunluk_Uretim_Plani_(KGUP)-01012025-01042025.csv",
-    "data_s/Kesinlesmis_Gunluk_Uretim_Plani_(KGUP)-02042025-02072025.csv",
-    "data_s/Kesinlesmis_Gunluk_Uretim_Plani_(KGUP)-03072025-03102025.csv",
-    "data_s/Kesinlesmis_Gunluk_Uretim_Plani_(KGUP)-03102025-30112025.csv"
-]
-kgup_dfs = []
-for file in kgup_files:
-    df_final = pd.read_csv(file,sep=";")
-    kgup_dfs.append(df_final)
-kgup_df = pd.concat(kgup_dfs)
-kgup_df = kgup_df.drop_duplicates(subset=['Tarih', 'Saat']).reset_index(drop=True)
-
-#---------------------------
-# Tarih Formatı Değiştirme ve Merge İşlemleri
-#---------------------------
-
-# 1.Merge İşlemi
-merge_1 = pd.merge(ptf_df,yuk_df, on=["Tarih","Saat"] ,how="inner" )
-
-# 1.Tarih Format Değişimi
-merge_1['Tarih'] = pd.to_datetime(merge_1['Tarih'], dayfirst=True, errors='coerce').dt.normalize()
-kgup_df['Tarih'] = pd.to_datetime(kgup_df['Tarih'], dayfirst=True, errors='coerce').dt.normalize()
-
-# Saat Formatı Eşitleme
-merge_1['Saat'] = merge_1['Saat'].astype(str).str.strip().str[:5]
-kgup_df['Saat'] = kgup_df['Saat'].astype(str).str.strip().str[:5]
-
-# 2.Merge İşlemi
-df_final = pd.merge(merge_1, kgup_df, on=["Tarih","Saat"] ,how="inner" ).reset_index(drop=True)
-df_final = df_final.sort_values(by=["Tarih", "Saat"]).reset_index(drop=True)
-
-
-
-#---------------------------
-# Değişken Tiplerini Düzeltme
-#---------------------------
+# ---------------------------
+# VERİ OKUMA
+# ---------------------------
+df_final = pd.read_excel("data_s/güncel_set.xlsx")
+df_final.head(20)
+# ---------------------------
+# DEĞİŞKEN TİPİ DÜZELTME
+# ---------------------------
 def clean_currency(x):
     if isinstance(x, str):
-        # 1. Önce binlik ayracı olan NOKTALARI tamamen sil
-        x = x.replace('.', '')
-        # 2. Sonra ondalık ayracı olan VİRGÜLLERİ noktaya çevir
-        x = x.replace(',', '.')
+        x = x.replace('.', '').replace(',', '.')
     return float(x)
-obcejt_to_str = [col for col in df_final.columns if col not in ['Tarih', 'Saat']]
-for col in obcejt_to_str:
+
+object_to_float = [col for col in df_final.columns if col not in ['Tarih', 'Saat']]
+for col in object_to_float:
     df_final[col] = df_final[col].apply(clean_currency)
 
-# df_final.to_csv('EPIAS_Project_Dataset.csv', index=False)
+# ---------------------------
+# TARİH NORMALİZE (EN KRİTİK KISIM)
+# ---------------------------
+df_final['Tarih'] = pd.to_datetime(df_final['Tarih']).dt.normalize()
 
-#---------------------------
-# Dolar Kurunu Ekleme(Yahoo)
-#---------------------------
+# ---------------------------
+# DOLAR KURU (YAHOO)
+# ---------------------------
 start_date = df_final['Tarih'].min()
 end_date = df_final['Tarih'].max()
 
 usd_data = yf.download('TRY=X', start=start_date, end=end_date + pd.Timedelta(days=5))
-usd_data = usd_data['Close'].reset_index()
+usd_data = usd_data[['Close']].reset_index()
 usd_data.columns = ['Tarih', 'Dolar_Kuru']
 
 usd_data['Tarih'] = pd.to_datetime(usd_data['Tarih']).dt.normalize()
 usd_data['Tarih'] = usd_data['Tarih'].dt.tz_localize(None)
 
-#---------------------------
-# BOTAS Veri Ekleme
-#---------------------------
-
-# Kıyaslama yapacağımız sınır tarihi belirliyoruz
-sinir_tarih = pd.Timestamp('2025-07-01')
-
-# 2. ADIM: List Comprehension ile yeni değişkeni oluşturma
-# Mantık: [ (Koşul sağlanırsa değer) if (koşul) else (sağlanmazsa değer) for x in (sütun) ]
-
-df_final['dogalgaz_fiyatlari_Mwh'] = [
-    1127.82 if tarih <= sinir_tarih else 1409.77  # 1500 yerine sonraki tarihlerin fiyatını yazmalısın
-    for tarih in df_final['Tarih']
-]
-
-print(df_final)
-# CHECK
-df_final[df_final['Tarih'] == '2025-08-20']['dogalgaz_fiyatlari_Mwh'].values[0]
-df_final[df_final['Tarih'] == '2025-05-20']['dogalgaz_fiyatlari_Mwh'].values[0]
-df_final["Tarih"]
-
-# Datelerdeki boşluk dolar değerlerini doldurduk
+# Eksik günleri doldur
 all_dates = pd.DataFrame({'Tarih': pd.date_range(start=start_date, end=end_date, freq='D')})
-all_dates['Tarih'] = all_dates['Tarih'].dt.normalize().dt.tz_localize(None)
+all_dates['Tarih'] = all_dates['Tarih'].dt.normalize()
 
 usd_data = pd.merge(all_dates, usd_data, on='Tarih', how='left')
 usd_data['Dolar_Kuru'] = usd_data['Dolar_Kuru'].ffill().bfill()
 
 # Ana veriye ekle
 df_final = pd.merge(df_final, usd_data, on='Tarih', how='left')
+df_final.head(100)
+# ---------------------------
+# BOTAS DOĞALGAZ FİYATI
+# ---------------------------
+sinir_tarih = pd.Timestamp('2025-07-01')
 
-
-
-
-
-#---------------------------
-# Gereksiz Değişkenleri Veri Setinden Atma
-#---------------------------
+df_final['dogalgaz_fiyatlari_Mwh'] = np.where(
+    df_final['Tarih'] <= sinir_tarih,
+    1127.82,
+    1409.77
+)
+df_final.head(100)
+# ---------------------------
+# GEREKSİZ SÜTUNLAR
+# ---------------------------
 drop_list = [
     'PTF (USD/MWh)', 'PTF (EUR/MWh)',
     'Toplam(MWh)',
     'Nafta', 'Fueloil',
     'Taş Kömür', 'Diğer'
 ]
+
 existing_drop = [col for col in drop_list if col in df_final.columns]
-if existing_drop:
-    df_final.drop(columns=existing_drop, inplace=True)
+df_final.drop(columns=existing_drop, inplace=True)
 
-#---------------------------
+# ---------------------------
 # KAYIT
-#---------------------------
-df_final.to_csv('EPIAS_.csv', index=False)
-df_final.head()
+# ---------------------------
+df_final.to_csv('EPIAS_yeni.csv', index=False)
 
-
-
-
-
+# ---------------------------
+# KONTROL
+# ---------------------------
+print(df_final[['Tarih', 'Saat', 'Dolar_Kuru']].head(10))
 
 
 ##############################################################
@@ -172,7 +117,11 @@ def data_summary(dataframe, head=5):
     print(dataframe.isnull().sum())
 
 data_summary(df_final)
-
+print("Güneş değeri dağılımı:")
+print("Negatif (<0):", (df_final['Güneş'] < 0).sum())
+print("Sıfır (=0):", (df_final['Güneş'] == 0).sum())
+print("Pozitif (>0):", (df_final['Güneş'] > 0).sum())
+df_final['Güneş'] = df_final['Güneş'].clip(lower=0)
 def degisken_analiz(dataframe, cat_th=2, car_th=20):
     # cat_cols, cat_but_car
     cat_cols = [col for col in dataframe.columns if dataframe[col].dtypes == "O"]
@@ -210,6 +159,7 @@ print("\n--- NUMERİK DEĞİŞKENLERİN DAĞILIMI ---")
 for col in num_cols:
     numeric_summary(df_final, numerical_col=col, plot=True)
 
+
 #---------------------------
 # Target
 #---------------------------
@@ -218,7 +168,7 @@ def target_summary_with_numeric(dataframe, target, numerical_col):
     print(dataframe.groupby(target).agg({numerical_col: "mean"}), end="\n\n\n")
 
 for col in num_cols:
-    target_summary_with_numeric(df_final, "PTF (TL/MWh)", col)
+    target_summary_with_numeric(df_final, "PTF (TL/MWH)", col)
 #---------------------------
 # Korelasyon
 #---------------------------
@@ -295,13 +245,13 @@ df_final['TOPLAM_URETIM'] = (
     df_final['Barajlı'] +
     df_final['Akarsu'] +
     df_final['Rüzgar'] +
-    df_final['Gunes'] +
+    df_final['Güneş'] +
     df_final['Biyokütle']
 )
-
+df_final.info()
 df_final['YENILENEBILIR_TOPLAM'] = (
     df_final['Rüzgar'] +
-    df_final['Gunes'] +
+    df_final['Güneş'] +
     df_final['Barajlı'] +
     df_final['Akarsu'] +
     df_final['Jeotermal'] +
@@ -318,17 +268,17 @@ df_final['TOPLAM_TERMIK_URETIM'] = (
 
 df_final['YENILENEBILIR_ORANI'] = df_final['YENILENEBILIR_TOPLAM'] / df_final['TOPLAM_URETIM']
 
+df_final['PTF_lag_1'] = df_final['PTF (TL/MWH)'].shift(1)
+df_final['PTF_lag_24'] = df_final['PTF (TL/MWH)'].shift(24)
+df_final['PTF_lag_168'] = df_final['PTF (TL/MWH)'].shift(168)
 
-
-
-df_final['PTF_lag_1'] = df_final['PTF (TL/MWh)'].shift(1)
-df_final['PTF_lag_24'] = df_final['PTF (TL/MWh)'].shift(24)
-df_final['PTF_lag_168'] = df_final['PTF (TL/MWh)'].shift(168)
-
-df_final['PTF_roll_mean_24'] = df_final['PTF (TL/MWh)'].rolling(24).mean()
-df_final['PTF_roll_std_24'] = df_final['PTF (TL/MWh)'].rolling(24).std()
+df_final['PTF_roll_mean_24'] = df_final['PTF (TL/MWH)'].rolling(24).mean()
+df_final['PTF_roll_std_24'] = df_final['PTF (TL/MWH)'].rolling(24).std()
 
 df_final.head(200)
+
+
+
 
 #Lag ve rolling sonrası ilk satırlar boş olur:
 
@@ -338,7 +288,7 @@ df_final.head(200)
 
 # 1. DOĞALGAZ ETKİSİ (Gas Impact)
 # Mantık: O saatte ne kadar çok gaz yakılıyorsa, gazın birim fiyatı o kadar önem kazanır.
-# dogalgaz_fiyatlari_Mwh genelde TL bazlıdır (BOTAŞ Tarifesi). 
+# dogalgaz_fiyatlari_Mwh genelde TL bazlıdır (BOTAŞ Tarifesi).
 # Eğer bu veri zaten TL ise Dolar ile çarpmaya gerek yoktur.
 
 df_final['Gas_Impact'] = df_final['Doğalgaz'] * df_final['dogalgaz_fiyatlari_Mwh']
@@ -368,7 +318,7 @@ except locale.Error:
 
 def get_holiday_dates_2025():
     """
-    Senin sağladığın listeden sadece tarih objelerini (datetime.date) 
+    Senin sağladığın listeden sadece tarih objelerini (datetime.date)
     bir liste olarak döndürür.
     """
     holidays = [
@@ -433,7 +383,7 @@ df_final['Is_Weekend'] = pd.to_datetime(df_final['Tarih']).dt.dayofweek.isin([5,
 df_final['Is_Official_Holiday'] = df_final['Tarih'].isin(resmi_tatil_gunleri).astype(int)
 
 # D) Is_Holiday (Genel Tatil Durumu)
-# Hafta sonu VEYA Resmi tatil ise 1 olsun. 
+# Hafta sonu VEYA Resmi tatil ise 1 olsun.
 # (Çünkü model için Pazar günü ile Bayram günü etkisi benzerdir: Talep düşer)
 df_final['Is_Holiday'] = (df_final['Is_Weekend'] | df_final['Is_Official_Holiday']).astype(int)
 
