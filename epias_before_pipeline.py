@@ -12,6 +12,9 @@ from scipy import stats
 from scipy.stats import norm
 import statsmodels.api as sm
 from statsmodels.tsa.stattools import adfuller
+from statsmodels.stats.outliers_influence import variance_inflation_factor
+import pandas as pd
+
 # ---------------------------
 # AYARLAR
 # ---------------------------
@@ -295,5 +298,162 @@ if adf_test[1] <= 0.05:
     print("\nSonuç: p <= 0.05. H0 reddedilir. Seri DURAĞANDIR.")
 else:
     print("\nSonuç: p > 0.05. H0 reddedilemez. Seri DURAĞAN DEĞİLDİR (Trend var).")
+
+# Bağımsız değişken listesi (PTF hariç, sadece sayısal olanlar)
+independent_cols = [col for col in df_final.columns if
+                    col not in ['PTF (TL/MWH)', 'Tarih', 'Zaman'] and df_final[col].dtype in ['float64', 'int64']]
+
+adf_results = []
+
+for col in independent_cols:
+    # NaN değerleri temizleyerek testi çalıştır
+    series = df_final[col].dropna()
+    result = adfuller(series, autolag='AIC')
+
+    p_value = result[1]
+    is_stationary = "Evet" if p_value <= 0.05 else "Hayır"
+
+    adf_results.append({
+        'Değişken': col,
+        'ADF İstatistiği': round(result[0], 4),
+        'p-değeri': p_value,
+        'Durağan mı?': is_stationary
+    })
+
+# Sonuçları DataFrame olarak görselleştir
+adf_df = pd.DataFrame(adf_results)
+print(adf_df)
+
+
+
+
+# Durağan olmayan ve sınırda olan değişkenleri görselleştirelim
+cols_to_plot = ['Dolar_Kuru', 'dogalgaz_fiyatlari_Mwh', 'Akarsu', 'Jeotermal']
+
+fig, axes = plt.subplots(len(cols_to_plot), 1, figsize=(12, 15))
+
+for i, col in enumerate(cols_to_plot):
+    axes[i].plot(df_final.index, df_final[col], color='tab:blue')
+    axes[i].set_title(f'{col} - Zaman Serisi Grafiği (Durağanlık Kontrolü)')
+    axes[i].set_ylabel('Değer')
+    axes[i].grid(True, alpha=0.3)
+
+plt.tight_layout()
+plt.show()
+
+
+
+
+# 1. Grup: Fiyat ve Maliyet Volatilitesi (PTF, Dolar, Gaz Fiyatı)
+# Not: Doların ham fiyatı trend izlese de, volatilitesi ekonomik risk dönemlerini gösterir.
+price_maliye_cols = ['PTF (TL/MWH)', 'Dolar_Kuru', 'dogalgaz_fiyatlari_Mwh']
+
+# 2. Grup: Esnek ve Baz Yük Üretim Volatilitesi (Fosil Yakıtlar)
+# Doğalgaz ve Kömür santrallerindeki ani oynaklıklar sistemdeki arz şoklarını temsil eder.
+fosil_cols = ['Doğalgaz', 'Linyit', 'İthal Kömür']
+
+# 3. Grup: Yenilenebilir Enerji Volatilitesi
+# Akarsu ve Rüzgar'ın yanına Güneş'i de ekliyoruz (Bulutluluk etkisi oynaklık yaratır).
+yenilenebilir_cols = ['Akarsu', 'Rüzgar', 'Güneş']
+
+# Fonksiyon: Gruplar için hareketli standart sapma çizdirme
+def plot_grouped_volatility(df, columns, title):
+    vol_data = df[columns].rolling(window=24).std()
+    vol_data.plot(figsize=(12, 5), title=title)
+    plt.ylabel("Standart Sapma (24s)")
+    plt.grid(True, alpha=0.3)
+    plt.show()
+
+# Uygulama
+plot_grouped_volatility(df_final, price_maliye_cols, "Fiyat ve Döviz Volatilitesi")
+plot_grouped_volatility(df_final, fosil_cols, "Fosil Yakıt Üretim Volatilitesi")
+plot_grouped_volatility(df_final, yenilenebilir_cols, "Yenilenebilir Enerji Üretim Volatilitesi")
+
+
+
+
+# 1. Sayısal sütunları seçelim
+numerical_cols = df_final.select_dtypes(include=[np.number]).columns
+
+# 2. Spearman Korelasyon Matrisini hesaplayalım
+spearman_corr = df_final[numerical_cols].corr(method='spearman')
+
+# 3. Sadece PTF ile olan ilişkileri alıp sıralayalım
+ptf_corr = spearman_corr[['PTF (TL/MWH)']].sort_values(by='PTF (TL/MWH)', ascending=False)
+
+# 4. Görselleştirme
+plt.figure(figsize=(8, 12))
+sns.heatmap(ptf_corr, annot=True, cmap='RdYlGn', fmt=".2f", center=0)
+plt.title("Değişkenlerin PTF ile Spearman Korelasyonu")
+plt.show()
+
+
+
+
+
+# 1. Sadece bağımsız değişkenleri seçelim (Bağımlı değişken PTF ve Tarih hariç)
+X = df_final.drop(['PTF (TL/MWH)'], axis=1).select_dtypes(include=[np.number])
+
+# 2. VIF için sabit (constant) eklenmesi önerilir (opsiyonel ama sağlıklı sonuç verir)
+# Ancak VIF kütüphanesi genelde ham veriyle de çalışır.
+vif_data = pd.DataFrame()
+vif_data["Değişken"] = X.columns
+
+# 3. Her değişken için VIF değerini hesapla
+vif_data["VIF"] = [variance_inflation_factor(X.values, i) for i in range(len(X.columns))]
+
+print(vif_data.sort_values(by="VIF", ascending=False))
+
+
+
+
+# Korelasyonu düşük ama VIF'i çok yüksek olanları eleyerek testi tekrarlayalım
+# Örn: Biyokütle, Jeotermal ve Akarsu'yu çıkarıyoruz
+drop_list = ['Biyokütle', 'Jeotermal', 'Akarsu']
+X_reduced = X.drop(columns=drop_list)
+
+vif_reduced = pd.DataFrame()
+vif_reduced["Değişken"] = X_reduced.columns
+vif_reduced["VIF"] = [variance_inflation_factor(X_reduced.values, i) for i in range(len(X_reduced.columns))]
+
+print("Gereksiz Değişkenler Elendikten Sonra VIF:")
+print(vif_reduced.sort_values(by="VIF", ascending=False))
+
+
+
+from sklearn.preprocessing import StandardScaler
+
+scaler = StandardScaler()
+X_scaled = scaler.fit_transform(X) # Orijinal X verisi (tüm bağımsız değişkenler)
+
+vif_scaled = pd.DataFrame()
+vif_scaled["Değişken"] = X.columns
+vif_scaled["VIF"] = [variance_inflation_factor(X_scaled, i) for i in range(X_scaled.shape[1])]
+
+print("StandardScaler Sonrası VIF Değerleri:")
+print(vif_scaled.sort_values(by="VIF", ascending=False))
+
+
+
+# Durağan olmayan ve yüksek VIF verenlerin 1. derece farkını alalım
+X_diff = X.diff().dropna()
+
+vif_diff = pd.DataFrame()
+vif_diff["Değişken"] = X_diff.columns
+vif_diff["VIF"] = [variance_inflation_factor(X_diff.values, i) for i in range(len(X_diff.columns))]
+
+print("Fark Alma (Differencing) Sonrası VIF Değerleri:")
+print(vif_diff.sort_values(by="VIF", ascending=False))
+
+
+
+
+
+
+
+
+
+
+
 
 
