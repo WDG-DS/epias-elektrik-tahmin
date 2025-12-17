@@ -24,7 +24,8 @@ pd.set_option('display.float_format', lambda x: '%.3f' % x)
 # ---------------------------
 # VERİ OKUMA
 # ---------------------------
-df_final = pd.read_csv("data_s/data_set.csv")
+"""df_final = pd.read_csv("data_s/data_set.csv")"""
+df_final = pd.read_excel("data_s/data_set_ex.xlsx")
 df_final_c = df_final.copy()
 # ---------------------------
 # DEĞİŞKEN TİPİ DÜZELTME
@@ -100,6 +101,10 @@ def data_summary(dataframe, head=5):
     print(dataframe.isnull().sum())
 
 data_summary(df_final)
+
+
+df_final.loc[df_final['Güneş'] < 0, 'Güneş'] = 0
+
 print("Güneş değeri dağılımı:")
 print("Negatif (<0):", (df_final['Güneş'] < 0).sum())
 print("Sıfır (=0):", (df_final['Güneş'] == 0).sum())
@@ -200,9 +205,49 @@ def check_physical_integrity(df):
     return df
 check_physical_integrity(df_final)
 
+
+def plot_all_boxplots(df):
+    # Stil ayarları
+    sns.set_theme(style="whitegrid")
+
+    # 1. GRUP: Fiyat Değişkenleri (Küçük Ölçekli)
+    # PTF, Dolar ve Doğalgaz Fiyatları benzer ölçeklerdedir.
+    price_cols = ['PTF (TL/MWH)', 'Dolar_Kuru', 'dogalgaz_fiyatlari_Mwh']
+
+    # 2. GRUP: Büyük Ölçekli Üretim ve Yük
+    # Yük tahmini ve ana üretim kalemleri (Barajlı, Doğalgaz Üretimi)
+    large_scale_cols = ['Yük Tahmin Planı (MWh)', 'Doğalgaz', 'Barajlı', 'İthal Kömür']
+
+    # 3. GRUP: Yenilenebilir ve Diğer Üretimler
+    # Rüzgar, Güneş, Akarsu, Jeotermal gibi daha orta ölçekli üretimler
+    renewable_cols = ['Rüzgar', 'Güneş', 'Akarsu', 'Linyit', 'Jeotermal', 'Biyokütle', 'Fuel Oil']
+
+    # Grafiklerin çizilmesi
+    fig, axes = plt.subplots(3, 1, figsize=(14, 18))
+
+    # Plot 1: Fiyatlar
+    sns.boxplot(data=df[price_cols], ax=axes[0], palette="Set2")
+    axes[0].set_title('Grup 1: Fiyat Bazlı Değişkenler', fontsize=15)
+
+    # Plot 2: Büyük Ölçekli Veriler
+    sns.boxplot(data=df[large_scale_cols], ax=axes[1], palette="Set1")
+    axes[1].set_title('Grup 2: Yük ve Büyük Ölçekli Üretimler', fontsize=15)
+
+    # Plot 3: Yenilenebilir ve Diğerleri
+    sns.boxplot(data=df[renewable_cols], ax=axes[2], palette="Pastel1")
+    axes[2].set_title('Grup 3: Yenilenebilir Enerji ve Diğer Üretimler', fontsize=15)
+    plt.xticks(rotation=45)
+
+    plt.tight_layout()
+    plt.show()
+
+plot_all_boxplots(df_final)
+
 df_final['PTF (TL/MWH)'].describe().T
 sayi = (df_final['PTF (TL/MWH)'] == 99999.000).sum()
 print(f"99999.000 değeri {sayi} kez geçiyor.")
+
+
 
 
 
