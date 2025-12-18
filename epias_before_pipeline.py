@@ -1291,55 +1291,48 @@ if feature_name in X_test.columns:
     plt.title(f"Bağımlılık Grafiği: {feature_name} vs Fiyat Etkisi", fontsize=14)
     plt.show()
 
-
-
-
+import pandas as pd
+import numpy as np
+import matplotlib.pyplot as plt
+import matplotlib.dates as mdates
+import holidays
 
 # =============================================================================
-# ADIM 8: ARALIK 2025 SENARYO TAHMİNİ (RECURSIVE FORECASTING) - DÜZELTİLMİŞ
+# ADIM 8: ARALIK 2025 SENARYO TAHMİNİ (FİNAL DÜZELTİLMİŞ VE BİRLEŞTİRİLMİŞ SÜRÜM)
 # =============================================================================
 print("🔮 Geleceğe Dönüş: Aralık 2025 Tahmini Hazırlanıyor...\n")
 
 # 1. ARALIK AYI İÇİN BOŞ BİR ŞABLON OLUŞTURALIM
 # -----------------------------------------------------------------------------
-# 1 Aralık - 31 Aralık 2025 arası saatlik tarih aralığı
 future_dates = pd.date_range(start='2025-12-01 00:00', end='2025-12-31 23:00', freq='h')
 print(f"📅 Hedef Dönem: {len(future_dates)} Saat ({future_dates.min()} - {future_dates.max()})")
 
-# HATA ÇÖZÜMÜ BURADA:
-# Kasım ayı 720 saat, Aralık 744 saat. 24 saat eksik kalıyor.
-# X_test verisini alıp, eksik kalan kısmı son günden kopyalayarak tamamlıyoruz.
-
-# Önce eldeki Kasım verisini al
+# --- DÜZELTME 1: Satır Sayısı Eşitleme (720 -> 744) ---
+# Kasım verisi (X_test) eksik kalırsa tamamlıyoruz.
 temp_X = X_test.copy()
-
-# Eksik kalan saat sayısını bul (744 - 720 = 24 saat)
 missing_hours = len(future_dates) - len(temp_X)
 
 if missing_hours > 0:
-    print(f"⚠️ Veri boyutu eşitlemesi yapılıyor: {missing_hours} saatlik ek veri ekleniyor...")
-    # Son 'missing_hours' kadar saati alıp ucuna ekle
+    # Eksik kısım kadar veriyi son günden kopyala ekle
     padding = temp_X.iloc[-missing_hours:].copy()
     future_X = pd.concat([temp_X, padding], axis=0)
 else:
-    # Eğer test seti zaten büyükse sadece son 744 saati al
+    # Fazlaysa kes
     future_X = temp_X.iloc[-len(future_dates):].copy()
 
-# Şimdi boyutlar eşitlendi (744 satır), indeksi güvenle atayabiliriz
+# İndeksi Aralık ayı yap
 future_X.index = future_dates
 
+# 2. TARİHSEL ÖZELLİKLERİ GÜNCELLEME
 # -----------------------------------------------------------------------------
-# KODUN GERİ KALANI AYNEN DEVAM EDİYOR...
-# (Aşağıdaki Feature Update ve Döngü kısımlarını eski koddan aynen kullanabilirsin)
-# -----------------------------------------------------------------------------
+# Önce geçici olarak Saat_Int oluşturalım (Sin/Cos hesabı için lazım)
+future_X['Saat_Int'] = future_dates.hour
 
+# Diğer zaman değişkenleri
 if 'Month' in future_X.columns:
     future_X['Month'] = 12
-
-# Gün ve Saat döngülerini güncelle
 future_X['Day_of_Week'] = future_dates.dayofweek
 future_X['Is_Weekend'] = future_X['Day_of_Week'].isin([5, 6]).astype(int)
-future_X['Saat_Int'] = future_dates.hour
 
 # Trigonometrik dönüşümleri güncelle
 if 'Hour_Sin' in future_X.columns:
@@ -1350,59 +1343,377 @@ if 'Day_Sin' in future_X.columns:
     future_X['Day_Cos'] = np.cos(2 * np.pi * future_X['Day_of_Week'] / 7)
 
 # Tatil Günlerini Güncelle
-import holidays
-
 tr_holidays = holidays.TR(years=[2025])
 if 'Is_Holiday' in future_X.columns:
     future_X['Is_Holiday'] = future_dates.to_series().apply(lambda x: 1 if x in tr_holidays else 0)
 
-print("✅ Tarih ve Takvim verileri Aralık ayına göre güncellendi.")
+# --- DÜZELTME 2: Sütun Uyuşmazlığı (Saat_Int Temizliği) ---
+# Model eğitilirken 'Saat_Int' sütunu yoktu. O yüzden şimdi de silmeliyiz.
+if 'Saat_Int' in future_X.columns:
+    future_X.drop(columns=['Saat_Int'], inplace=True)
 
-# ... BURADAN SONRASI ESKİ KODUN AYNISI (Döngü ve Görselleştirme) ...
+print("✅ Tarih verileri güncellendi ve gereksiz sütunlar temizlendi.")
+
+# 3. ÖZYİNELEMELİ TAHMİN DÖNGÜSÜ
+# -----------------------------------------------------------------------------
 future_preds = []
-# Başlangıç için son bilinen gerçek fiyatlar (Kasım sonu)
-last_known_prices = y_test.iloc[-168:].values.tolist()
+last_known_prices = y_test.iloc[-168:].values.tolist()  # Başlangıç hafızası
 
-print("⏳ Simülasyon Başlıyor (744 Saat tek tek işleniyor)...")
+print("⏳ Simülasyon Başlıyor (744 Saat)...")
 
 for i in range(len(future_X)):
+    # Tek satır al (DataFrame olarak kalmalı)
     current_row = future_X.iloc[[i]].copy()
 
+    # Lag'leri güncelle
     if 'PTF_Lag_24' in current_row.columns:
         current_row['PTF_Lag_24'] = last_known_prices[-24]
     if 'PTF_Lag_168' in current_row.columns:
         current_row['PTF_Lag_168'] = last_known_prices[-168]
+
+    # Türetilmiş özellikleri güncelle
     if 'PTF_Roll_Mean_24' in current_row.columns:
         current_row['PTF_Roll_Mean_24'] = np.mean(last_known_prices[-24:])
+
     if 'Relative_Price_Pos' in current_row.columns:
         roll_168 = np.mean(last_known_prices[-168:])
-        current_row['Relative_Price_Pos'] = (current_row['PTF_Lag_24'] - roll_168) / (roll_168 + 1)
+        # Sıfıra bölme hatası koruması
+        denom = roll_168 if roll_168 != 0 else 1
+        current_row['Relative_Price_Pos'] = (current_row['PTF_Lag_24'] - roll_168) / denom
+
     if 'Price_Momentum' in current_row.columns:
         current_row['Price_Momentum'] = current_row['PTF_Lag_24'] - current_row['PTF_Lag_168']
 
-    pred = best_model.predict(current_row)[0]
-    pred = max(0, pred)
+    # TAHMİN YAP
+    try:
+        pred = best_model.predict(current_row)[0]
+    except Exception as e:
+        print(f"Hata oluştuğu satır: {i}")
+        print(f"Beklenen sütunlar: {best_model.feature_names_in_}")
+        print(f"Gelen sütunlar: {current_row.columns}")
+        raise e
+
+    pred = max(0, pred)  # Negatif fiyat engeli
     future_preds.append(pred)
     last_known_prices.append(pred)
 
 print("✅ Aralık ayı tahmini tamamlandı.")
 
-# Görselleştirme
+# 4. GÖRSELLEŞTİRME (DÜZELTİLMİŞ GRAFİK KODU)
+# -----------------------------------------------------------------------------
 df_forecast = pd.DataFrame({'Tahmin_Aralik': future_preds}, index=future_dates)
 
+# Grafik çizimi için gerçek tarihleri (dates_test) kullanalım
+# y_test'in indeksi sayısal olduğu için 2016 hatası veriyordu.
+last_week_dates = dates_test.iloc[-168:]
+last_week_values = y_test.iloc[-168:]
+
 plt.figure(figsize=(16, 6))
-plt.plot(y_test.index[-168:], y_test.iloc[-168:], label='Gerçekleşen (Kasım Sonu)', color='navy', alpha=0.5)
-plt.plot(df_forecast.index, df_forecast['Tahmin_Aralik'], label='Forecast (Aralık 2025)', color='red', linestyle='-',
-         linewidth=1.5)
+
+# GEÇMİŞ (Mavi Çizgi)
+plt.plot(last_week_dates, last_week_values,
+         label='Gerçekleşen (Kasım Sonu)', color='navy', alpha=0.7, linewidth=2)
+
+# GELECEK (Kırmızı Çizgi)
+plt.plot(df_forecast.index, df_forecast['Tahmin_Aralik'],
+         label='Forecast (Aralık 2025)', color='red', linestyle='-', linewidth=1.5)
+
+# ORTALAMA (Yeşil Kesik Çizgi)
 mean_val = df_forecast['Tahmin_Aralik'].mean()
-plt.axhline(mean_val, color='green', linestyle='--', label=f'Aralık Ort: {mean_val:.0f} TL')
+plt.axhline(mean_val, color='green', linestyle='--', linewidth=2, label=f'Aralık Ort: {mean_val:.0f} TL')
+
+# Grafik Ayarları
 plt.title('Aralık 2025: Gelecek Fiyat Tahmin Senaryosu (Forecast)', fontsize=14)
 plt.ylabel('PTF (TL/MWH)')
-plt.legend()
+plt.xlabel('Tarih')
+plt.legend(loc='upper left')
 plt.grid(True, alpha=0.3)
+
+# Tarih formatını güzelleştirme
+plt.gca().xaxis.set_major_formatter(mdates.DateFormatter('%d-%m-%Y'))
+plt.gcf().autofmt_xdate()
+
 plt.show()
 
 print(f"\n📢 Aralık 2025 Tahmin Özeti:")
 print(f"   Min Fiyat: {df_forecast['Tahmin_Aralik'].min():.2f} TL")
 print(f"   Max Fiyat: {df_forecast['Tahmin_Aralik'].max():.2f} TL")
 print(f"   Ort Fiyat: {df_forecast['Tahmin_Aralik'].mean():.2f} TL")
+
+
+
+
+import matplotlib.pyplot as plt
+import seaborn as sns
+import scipy.stats as stats
+import numpy as np
+import pandas as pd
+
+# =============================================================================
+# ADIM 9: RESIDUAL (HATA) ANALİZİ VE İSTATİSTİKSEL RAPOR
+# =============================================================================
+print("🕵️‍♂️ Model Hata Analizi (Residual Diagnostics) Başlatılıyor...\n")
+
+# NOT: Geleceğin (Aralık) gerçeğini bilmediğimiz için,
+# analizi modelin performansını ölçtüğümüz 'Test Seti' (Kasım) üzerinden yapıyoruz.
+
+# 1. Hataları Hesapla
+# -----------------------------------------------------------------------------
+# y_test: Gerçek Fiyatlar (Kasım)
+# y_pred: Modelin Tahminleri (Kasım)
+residuals = y_test - y_pred
+
+# İstatistiksel Metrikler
+mean_resid = np.mean(residuals)
+std_resid = np.std(residuals)
+skewness = stats.skew(residuals)
+kurtosis = stats.kurtosis(residuals)
+
+print(f"📊 İSTATİSTİKSEL ÖZET:")
+print(f"   Hata Ortalaması (Bias): {mean_resid:.2f} TL (0'a ne kadar yakınsa o kadar iyi)")
+print(f"   Standart Sapma:         {std_resid:.2f}")
+print(f"   Çarpıklık (Skewness):   {skewness:.2f} (0 ideal)")
+print(f"   Basıklık (Kurtosis):    {kurtosis:.2f} (Yüksekse 'Şişman Kuyruk' var demektir)")
+
+
+# 2. GÖRSELLEŞTİRME (4'lü Panel)
+# -----------------------------------------------------------------------------
+# Seaborn stilini ayarla (Grafiklerin daha profesyonel görünmesi için)
+sns.set(style="whitegrid")
+
+fig, axes = plt.subplots(2, 2, figsize=(18, 12))
+fig.suptitle('Model Hata Analizi (Residuals Diagnostics)', fontsize=16, fontweight='bold')
+
+# GRAFİK A: Residuals vs Time (Hataların Zamana Göre Dağılımı)
+axes[0, 0].plot(residuals.index, residuals, color='purple', alpha=0.7, linewidth=1)
+axes[0, 0].axhline(0, color='black', linestyle='--', linewidth=2)
+axes[0, 0].set_title('1. Hataların Zaman İçindeki Değişimi (Trend Var mı?)')
+axes[0, 0].set_ylabel('Hata (TL)')
+
+# GRAFİK B: Residuals vs Predicted (Heteroskedasite Kontrolü)
+axes[0, 1].scatter(y_pred, residuals, alpha=0.5, color='teal', edgecolor='k', s=30)
+axes[0, 1].axhline(0, color='black', linestyle='--', linewidth=2)
+axes[0, 1].set_title('2. Hata vs Tahmin (Hata Boyutu Tahmine Göre Değişiyor mu?)')
+axes[0, 1].set_xlabel('Tahmin Edilen Fiyat')
+axes[0, 1].set_ylabel('Hata')
+
+# GRAFİK C: Histogram (Hata Dağılımı)
+sns.histplot(residuals, kde=True, ax=axes[1, 0], color='orange', bins=40, line_kws={'linewidth': 2})
+axes[1, 0].axvline(0, color='black', linestyle='--', linewidth=2)
+axes[1, 0].set_title('3. Hata Dağılımı (Çan Eğrisi Olmalı)')
+axes[1, 0].set_xlabel('Hata Miktarı (TL)')
+
+# GRAFİK D: Q-Q Plot (Normallik Testi)
+stats.probplot(residuals, dist="norm", plot=axes[1, 1])
+axes[1, 1].get_lines()[0].set_color('blue') # Noktalar
+axes[1, 1].get_lines()[0].set_markersize(5)
+axes[1, 1].get_lines()[1].set_color('red')  # İdeal Çizgi
+axes[1, 1].get_lines()[1].set_linewidth(2)
+axes[1, 1].set_title('4. Q-Q Plot (Uç Değer Kontrolü)')
+
+plt.tight_layout(rect=[0, 0.03, 1, 0.95])
+plt.show()
+
+# 3. YORUM YAZDIRMA
+# -----------------------------------------------------------------------------
+print("\n📢 OTOMATİK YORUM:")
+if abs(mean_resid) < 50:
+    print("✅ BAŞARILI: Modelin hata ortalaması 0'a çok yakın. Yanlılık (Bias) yok.")
+else:
+    print("⚠️ UYARI: Modelde sistematik bir kayma (Bias) var.")
+
+if kurtosis > 3:
+    print("ℹ️ BİLGİ: Hata dağılımında 'Şişman Kuyruk' var. Model aşırı uç fiyatlarda (Spike) nadiren de olsa büyük hata yapabilir.")
+
+
+
+
+
+
+import matplotlib.pyplot as plt
+import seaborn as sns
+import scipy.stats as stats
+import numpy as np
+
+# =============================================================================
+# ADIM 9: RESIDUAL (HATA) ANALİZİ - MODEL GÜVENİLİRLİK TESTİ
+# =============================================================================
+# Not: Geleceğin (Aralık) gerçeğini bilmediğimiz için,
+# modelin karakterini 'Test Seti' (Kasım) üzerinden analiz ediyoruz.
+
+print("🕵️‍♂️ Model Hata Analizi (Residual Diagnostics) Başlatılıyor...\n")
+
+# 1. Residuals Hesaplama (Test Seti Üzerinde)
+# -----------------------------------------------------------------------------
+# y_test: Gerçek Kasım Fiyatları
+# y_pred: Modelin Kasım Tahminleri
+residuals = y_test - y_pred
+
+# İstatistiksel Özet
+print(f"Hata Ortalaması (Mean): {np.mean(residuals):.2f} (0'a yakın olmalı)")
+print(f"Hata Standart Sapması: {np.std(residuals):.2f}")
+print(f"Min Hata: {np.min(residuals):.2f}")
+print(f"Max Hata: {np.max(residuals):.2f}")
+
+
+# 2. GÖRSELLEŞTİRME (4'lü Panel)
+# -----------------------------------------------------------------------------
+fig, axes = plt.subplots(2, 2, figsize=(18, 12))
+fig.suptitle('Model Hata Analizi (Residuals Diagnostics)', fontsize=16)
+
+# GRAFİK A: Residuals vs Time (Hataların Zamana Göre Dağılımı)
+# Beklenti: Rastgele saçılmış noktalar (Belirli bir desen olmamalı)
+axes[0, 0].plot(residuals.index, residuals, color='purple', alpha=0.6)
+axes[0, 0].axhline(0, color='black', linestyle='--', linewidth=2)
+axes[0, 0].set_title('Hataların Zaman İçindeki Değişimi')
+axes[0, 0].set_ylabel('Hata (TL)')
+
+# GRAFİK B: Residuals vs Predicted (Hataların Tahmine Göre Dağılımı)
+# Beklenti: Heteroskedasite (Huni şekli) olmamalı.
+# Yani düşük fiyatta da yüksek fiyatta da hata benzer boyutta olmalı.
+axes[0, 1].scatter(y_pred, residuals, alpha=0.4, color='teal')
+axes[0, 1].axhline(0, color='black', linestyle='--', linewidth=2)
+axes[0, 1].set_title('Hata vs Tahmin (Heteroskedasite Kontrolü)')
+axes[0, 1].set_xlabel('Tahmin Edilen Fiyat')
+axes[0, 1].set_ylabel('Hata')
+
+# GRAFİK C: Histogram (Hata Dağılımı)
+# Beklenti: Çan Eğrisi (Normal Dağılım) ve Tepe noktası 0'da olmalı.
+sns.histplot(residuals, kde=True, ax=axes[1, 0], color='orange', bins=30)
+axes[1, 0].axvline(0, color='black', linestyle='--', linewidth=2)
+axes[1, 0].set_title('Hata Dağılımı (Histogram)')
+axes[1, 0].set_xlabel('Hata Miktarı (TL)')
+
+# GRAFİK D: Q-Q Plot (Normallik Testi)
+# Beklenti: Noktalar kırmızı çizgi üzerinde dümdüz gitmeli.
+stats.probplot(residuals, dist="norm", plot=axes[1, 1])
+axes[1, 1].get_lines()[0].set_color('blue')
+axes[1, 1].get_lines()[1].set_color('red')
+axes[1, 1].set_title('Q-Q Plot (Normallik Testi)')
+
+plt.tight_layout(rect=[0, 0.03, 1, 0.95])
+plt.show()
+
+# 3. YORUM VE SONUÇ
+# -----------------------------------------------------------------------------
+# Skewness (Çarpıklık) kontrolü
+skewness = stats.skew(residuals)
+print(f"\nDağılım Çarpıklığı (Skewness): {skewness:.2f}")
+
+if abs(skewness) < 0.5:
+    print("✅ Hatalar Simetrik (Normal) dağılıma yakın. Model tarafsız.")
+elif skewness > 0:
+    print("⚠️ Pozitif Çarpıklık: Model fiyatları bazen olduğundan DÜŞÜK tahmin ediyor (Gerçek > Tahmin).")
+else:
+    print("⚠️ Negatif Çarpıklık: Model fiyatları bazen olduğundan YÜKSEK tahmin ediyor (Gerçek < Tahmin).")
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+import pandas as pd
+import numpy as np
+import joblib
+
+# =============================================================================
+# ADIM 10: FİNAL - MODELİ FONKSİYONA DÖNÜŞTÜRME (DEPLOYMENT)
+# =============================================================================
+print("🚀 ADIM 10: Model 'Akıllı Fonksiyon' Haline Getiriliyor...\n")
+
+
+def tahmin_motoru(tarih, ptf_dun, ptf_gecen_hafta, dogalgaz_fiyati, yuk_tahmini, dolar_kuru):
+    """
+    Bu fonksiyon, eğitilmiş XGBoost modelini kullanarak tek bir saat için PTF tahmini yapar.
+    """
+    # 1. Gelen veriyi DataFrame'e çevir (Modelin anlayacağı dil)
+    tarih_dt = pd.to_datetime(tarih)
+
+    input_data = pd.DataFrame({
+        'Yük Tahmin Planı (MWh)': [yuk_tahmini],
+        'Dolar_Kuru': [dolar_kuru],
+        'Doğalgaz_Lag24': [dogalgaz_fiyati],  # Doğalgaz maliyeti
+        'PTF_Lag_24': [ptf_dun],
+        'PTF_Lag_168': [ptf_gecen_hafta],
+        # Diğer zorunlu alanları (Lag'lerden türetilenler) hesaplayalım
+        'PTF_Roll_Mean_24': [ptf_dun],  # Basitleştirilmiş (tek veri olduğu için)
+        'Relative_Price_Pos': [(ptf_dun - ptf_gecen_hafta) / (ptf_gecen_hafta + 1)],
+        'Price_Momentum': [ptf_dun - ptf_gecen_hafta],
+        # Takvim özellikleri
+        'Month': [tarih_dt.month],
+        'Day_of_Week': [tarih_dt.dayofweek],
+        'Is_Weekend': [1 if tarih_dt.dayofweek >= 5 else 0],
+        'Hour_Sin': [np.sin(2 * np.pi * tarih_dt.hour / 24)],
+        'Hour_Cos': [np.cos(2 * np.pi * tarih_dt.hour / 24)],
+        'Day_Sin': [np.sin(2 * np.pi * tarih_dt.dayofweek / 7)],
+        'Day_Cos': [np.cos(2 * np.pi * tarih_dt.dayofweek / 7)],
+    })
+
+    # Eksik kolonları (Eğitimde olup burada olmayanları) 0 ile doldur
+    # (Örn: Rüzgar, Jeotermal vb. manuel girilmediyse ortalama kabul edilir)
+    for col in best_model.feature_names_in_:
+        if col not in input_data.columns:
+            input_data[col] = 0  # Veya X_train[col].mean() yapılabilir
+
+    # Sütun sırasını modelin istediği gibi yap
+    input_data = input_data[best_model.feature_names_in_]
+
+    # 2. Tahmin Yap
+    prediction = best_model.predict(input_data)[0]
+    prediction = max(0, prediction)  # Eksi çıkarsa 0 yap
+
+    return prediction
+
+
+# --- ÖRNEK KULLANIM SENARYOSU ---
+print("🧪 SİSTEM TESTİ: Örnek bir gün için manuel tahmin yapılıyor...")
+
+# Senaryo: 15 Aralık 2025, Saat 14:00
+tarih_ornek = "2025-12-15 14:00:00"
+tahmin = tahmin_motoru(
+    tarih=tarih_ornek,
+    ptf_dun=2500,  # Dün aynı saatte fiyat 2500 TL idi
+    ptf_gecen_hafta=2400,  # Geçen hafta 2400 TL idi
+    dogalgaz_fiyati=12000,  # Doğalgaz üretim (veya maliyet) göstergesi
+    yuk_tahmini=40000,  # Yük tahmini yüksek
+    dolar_kuru=42.5  # Dolar kuru
+)
+
+print(f"\n📅 Tarih: {tarih_ornek}")
+print(f"⚡ Yapay Zeka Tahmini: {tahmin:.2f} TL/MWh")
+print("\n✅ PROJE BAŞARIYLA TAMAMLANDI! Geçmiş olsun. ☕️")
