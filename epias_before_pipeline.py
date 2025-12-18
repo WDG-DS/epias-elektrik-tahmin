@@ -562,7 +562,7 @@ plt.plot(rolling_std, label='24s Hareketli Oynaklık (Std)', color='black')
 plt.title('PTF Hareketli İstatistik Analizi')
 plt.legend()
 plt.show()
-
+#-------------------------
 import seaborn as sns
 import matplotlib.pyplot as plt
 import pandas as pd
@@ -774,6 +774,189 @@ model_cols = [c for c in df_final.columns if c not in ['Tarih', 'Saat', 'Zaman',
 
 print(f"🧠 Modele Girecek Değişken Sayısı: {len(model_cols)}")
 print(f"   Sniper'lar Dahil: Relative_Price_Pos, Net_Load, Thermal_Stress...")
+
+
+
+
+#-------
+import seaborn as sns
+import matplotlib.pyplot as plt
+import pandas as pd
+import numpy as np
+import holidays  # Tatiller için bu kütüphane şart: pip install holidays
+
+# =============================================================================
+# ADIM 5: FEATURE ENGINEERING (DÜZELTİLMİŞ VERSİYON)
+# =============================================================================
+
+# -----------------------------------------------------------------------------
+# 0. TATİL DEĞİŞKENLERİ (EKSİKTİ, EKLENDİ)
+# Türkiye takvimini ve dini bayramları çeker.
+# -----------------------------------------------------------------------------
+print("📅 Tatil Günleri İşleniyor...")
+# Türkiye tatillerini al
+tr_holidays = holidays.TR(years=[2023, 2024, 2025])
+
+# 'Tarih' sütununun datetime olduğundan emin olalım
+if 'Tarih' not in df_final.columns:
+    df_final = df_final.reset_index()
+    # İlk sütunu tarih varsay
+    col = df_final.columns[0]
+    df_final.rename(columns={col: 'Tarih'}, inplace=True)
+
+df_final['Tarih'] = pd.to_datetime(df_final['Tarih'])
+
+# Tatil mi? (0 veya 1)
+df_final['Is_Holiday'] = df_final['Tarih'].apply(lambda x: 1 if x in tr_holidays else 0)
+
+# Hafta sonu zaten vardı ama buraya da ekleyelim (Isı haritasından ders çıkardık)
+df_final['Day_of_Week'] = df_final['Tarih'].dt.dayofweek
+df_final['Is_Weekend'] = df_final['Day_of_Week'].isin([5, 6]).astype(int)
+
+
+# -----------------------------------------------------------------------------
+# 1. SHIFT OPERASYONU (DOĞRUYDU, AYNEN KORUNDU)
+# -----------------------------------------------------------------------------
+future_cols = ['Doğalgaz', 'Rüzgar', 'Güneş', 'Barajlı', 'Linyit',
+               'İthal Kömür', 'Akarsu', 'Fuel Oil', 'Jeotermal', 'Biyokütle']
+
+cols_to_shift = [c for c in future_cols if c in df_final.columns]
+
+for col in cols_to_shift:
+    # 24 Saat öteleme
+    df_final[f'{col}_Lag24'] = df_final[col].shift(24)
+    df_final.drop(columns=[col], inplace=True)
+
+# -----------------------------------------------------------------------------
+# 2. DURAĞANLAŞTIRMA / FARK ALMA (EKSİKTİ, EKLENDİ)
+# Doğalgaz gibi trend içeren verilerin günlük değişimini alıyoruz.
+# -----------------------------------------------------------------------------
+trend_cols = ['Doğalgaz_Lag24', 'İthal Kömür_Lag24', 'Linyit_Lag24'] # Varsa Dolar'ı da ekle
+cols_to_diff = [c for c in trend_cols if c in df_final.columns]
+
+for col in cols_to_diff:
+    # Hem Lag alınmış verinin farkını alıyoruz (Bugün - Dün)
+    df_final[f'{col}_Diff'] = df_final[col].diff()
+    # Orijinal Lag'li veriyi tutabilirsin veya silebilirsin (VIF durumuna göre)
+    # Biz şimdilik tutalım, model seçsin.
+
+# -----------------------------------------------------------------------------
+# 3. SAAT VE GÜN DÖNÜŞÜMLERİ (DOĞRUYDU, KORUNDU)
+# -----------------------------------------------------------------------------
+if 'Saat' in df_final.columns:
+    if df_final['Saat'].dtype == 'O':
+        df_final['Saat_Int'] = df_final['Saat'].astype(str).str.split(':').str[0].astype(int)
+    else:
+        df_final['Saat_Int'] = df_final['Saat']
+else:
+    # Saat yoksa tarihten çek
+    df_final['Saat_Int'] = df_final['Tarih'].dt.hour
+
+# Trigonometrik Dönüşüm
+df_final['Hour_Sin'] = np.sin(2 * np.pi * df_final['Saat_Int'] / 24)
+df_final['Hour_Cos'] = np.cos(2 * np.pi * df_final['Saat_Int'] / 24)
+df_final['Day_Sin'] = np.sin(2 * np.pi * df_final['Day_of_Week'] / 7)
+df_final['Day_Cos'] = np.cos(2 * np.pi * df_final['Day_of_Week'] / 7)
+
+
+# -----------------------------------------------------------------------------
+# 4. FİYAT HAFIZASI VE SIZINTI ENGELLEME (DÜZELTİLDİ!)
+# -----------------------------------------------------------------------------
+target_col = 'PTF (TL/MWH)'
+
+# Lag 24 ve 168 (Doğru)
+df_final['PTF_Lag_24'] = df_final[target_col].shift(24)
+df_final['PTF_Lag_168'] = df_final[target_col].shift(168)
+
+# DÜZELTME: Rolling Mean Sızıntısı Engellendi
+# Orijinal: df_final[target].rolling(24).mean() -> HATALI (Bugünü görür)
+# Yeni: Lag_24 üzerinden ortalama alıyoruz. Yani "Dün bu saatten geriye 24 saat".
+df_final['PTF_Roll_Mean_24'] = df_final['PTF_Lag_24'].rolling(24).mean()
+df_final['PTF_Roll_Std_24'] = df_final['PTF_Lag_24'].rolling(24).std()
+
+
+# -----------------------------------------------------------------------------
+# 5. SNIPER ÖZELLİKLER (DOĞRUYDU, KORUNDU)
+# -----------------------------------------------------------------------------
+# A. Relative Price Position (Güvenli, çünkü Lag_24 kullanıyor)
+df_final['PTF_Roll_Mean_168'] = df_final['PTF_Lag_24'].rolling(168).mean()
+df_final['Relative_Price_Pos'] = (df_final['PTF_Lag_24'] - df_final['PTF_Roll_Mean_168']) / (df_final['PTF_Roll_Mean_168'] + 1)
+
+# B. Net Load (Yenilenebilir Toplamı)
+ren_cols = ['Rüzgar_Lag24', 'Güneş_Lag24', 'Akarsu_Lag24', 'Jeotermal_Lag24', 'Biyokütle_Lag24']
+existing_ren = [c for c in ren_cols if c in df_final.columns]
+df_final['Total_Renewable_Lag24'] = df_final[existing_ren].sum(axis=1)
+
+load_col = 'Yük Tahmin Planı (MWh)'
+if load_col in df_final.columns:
+    df_final['Net_Load'] = df_final[load_col] - df_final['Total_Renewable_Lag24']
+else:
+    df_final['Net_Load'] = -df_final['Total_Renewable_Lag24']
+
+# C. Thermal Stress Ratio
+therm_cols = ['Doğalgaz_Lag24', 'İthal Kömür_Lag24', 'Linyit_Lag24', 'Fuel Oil_Lag24']
+existing_therm = [c for c in therm_cols if c in df_final.columns]
+df_final['Total_Thermal_Lag24'] = df_final[existing_therm].sum(axis=1)
+
+if load_col in df_final.columns:
+    df_final['Thermal_Stress'] = df_final['Total_Thermal_Lag24'] / (df_final[load_col] + 1)
+
+# D. Momentum
+df_final['Price_Momentum'] = df_final['PTF_Lag_24'] - df_final['PTF_Lag_168']
+
+
+# -----------------------------------------------------------------------------
+# 6. TEMİZLİK
+# -----------------------------------------------------------------------------
+print(f"🧹 Temizlik Öncesi: {len(df_final)}")
+df_final.dropna(inplace=True)
+print(f"✅ Temizlik Sonrası: {len(df_final)}")
+
+# Modele girmeyecek sütunları belirle (Tarih, Saat, vs.)
+exclude_cols = ['Tarih', 'Saat', 'Zaman', 'Saat_Int', 'PTF (TL/MWH)'] # Hedef değişkeni de X'ten ayırırken kullanacağız
+feature_cols = [c for c in df_final.columns if c not in exclude_cols]
+
+print(f"🚀 Hazır Özellik Sayısı: {len(feature_cols)}")
+print(feature_cols)
+
+
+
+
+# =============================================================================
+# ADIM 6: MODELLEME
+# ==============================================
+
+
+# -----------------------------------------------------------------------------
+# 1. X (ÖZELLİKLER) ve y (HEDEF) AYRIMI
+# -----------------------------------------------------------------------------
+
+# Hedef Değişkenimiz
+target_col = 'PTF (TL/MWH)'
+
+# Modelin görmemesi gereken (Drop Listesi) sütunlar
+# Not: 'Yük Tahmin Planı (MWh)' şimdilik kalıyor.
+drop_cols = [
+    'Tarih',        # Datetime formatı, model işlemez
+    'Zaman',        # Datetime formatı, model işlemez
+    'Saat',         # String/Object formatı veya gereksiz tekrar
+    'Saat_Int',     # Hour_Sin/Cos varken bazen gereksiz olabilir ama sayısal olduğu için kalabilir.
+    target_col      # HEDEF DEĞİŞKEN (Sızıntıyı önlemek için X'ten atıyoruz)
+]
+
+# Sadece veri setinde mevcut olanları drop listesine ekle (Hata almamak için)
+existing_drop_cols = [c for c in drop_cols if c in df_final.columns]
+
+# X Matrisi (Girdiler)
+X = df_final.drop(columns=existing_drop_cols)
+
+# y Vektörü (Çıktı / Hedef)
+y = df_final[target_col]
+
+print(f"🚫 Drop Edilen Sütunlar: {existing_drop_cols}")
+print(f"✅ X Matrisi Boyutu: {X.shape}")
+print(f"🎯 y Matrisi Boyutu: {y.shape}")
+
 
 
 
