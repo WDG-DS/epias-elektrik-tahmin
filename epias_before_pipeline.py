@@ -1139,3 +1139,270 @@ plt.barh(X.columns[sorted_idx], best_model.feature_importances_[sorted_idx])
 plt.title("XGBoost: En Önemli Değişkenler (Feature Importance)")
 plt.xlabel("Önem Düzeyi")
 plt.show()
+
+
+
+
+# -----------------------------------------------------------------------------
+# OVERFITTING KONTROL TESTİ (TRAIN vs TEST)
+# -----------------------------------------------------------------------------
+print("🔍 OVERFITTING (AŞIRI ÖĞRENME) KONTROLÜ YAPILIYOR...")
+
+# 1. Eğitim Seti Üzerinde Tahmin Yap (Modelin ezberleyip ezberlemediğini görmek için)
+y_train_pred = best_model.predict(X_train)
+y_train_pred = np.maximum(y_train_pred, 0)
+
+# 2. Test Seti Zaten Yapılmıştı (y_pred)
+
+# 3. Skorları Karşılaştır
+rmse_train = np.sqrt(mean_squared_error(y_train, y_train_pred))
+rmse_test = rmse  # Zaten hesaplamıştık (460.75)
+
+print(f"📘 Eğitim (Train) Hatası (RMSE): {rmse_train:.2f} TL")
+print(f"📙 Test (Sınav) Hatası (RMSE):   {rmse_test:.2f} TL")
+
+diff = rmse_test - rmse_train
+percentage_diff = (diff / rmse_train) * 100
+
+print(f"\n⚠️ Fark: {diff:.2f} TL (%{percentage_diff:.2f})")
+
+if percentage_diff > 50:
+    print("Sonuç: 🚨 OVERFITTING VAR! (Model eğitim setini ezberlemiş, testte çuvallıyor.)")
+elif percentage_diff < 0:
+    print("Sonuç: ❓ UNDERFITTING İHTİMALİ (Test sonucu eğitimden daha iyi, çok nadir ama olabilir.)")
+else:
+    print("Sonuç: ✅ MODEL SAĞLIKLI (Genelleştirme yeteneği var.)")
+
+
+
+
+import matplotlib.pyplot as plt
+
+# 1. Modeli Geçmişi Kaydederek Tekrar Çalıştırıyoruz
+# (eval_result() fonksiyonunu kullanabilmek için)
+print("🩺 Modelin EKG'si (Öğrenme Eğrisi) Çıkarılıyor...")
+
+eval_set = [(X_train, y_train), (X_test, y_test)]
+best_model.fit(
+    X_train, y_train,
+    eval_set=eval_set,
+    verbose=False
+)
+
+# Modelin her adımda kaydettiği hataları çekelim
+results = best_model.evals_result()
+epochs = len(results['validation_0']['rmse'])
+x_axis = range(0, epochs)
+
+# -----------------------------------------------------------------------------
+# GÖRSELLEŞTİRME: 2 Farklı Kanıt Grafiği
+# -----------------------------------------------------------------------------
+fig, ax = plt.subplots(1, 2, figsize=(18, 7))
+
+# GRAFİK 1: ÖĞRENME EĞRİSİ (LEARNING CURVE)
+# Hatanın ağaç sayısına göre değişimi
+ax[0].plot(x_axis, results['validation_0']['rmse'], label='Train (Eğitim) Hatası', color='blue', linewidth=2)
+ax[0].plot(x_axis, results['validation_1']['rmse'], label='Test (Sınav) Hatası', color='orange', linewidth=2, linestyle='--')
+ax[0].legend()
+ax[0].set_ylabel('RMSE (Hata)')
+ax[0].set_xlabel('Ağaç Sayısı (Iterations)')
+ax[0].set_title('Overfitting Kontrolü: Hata Eğrileri\n(Çizgiler Paralel ise Sorun Yok)')
+ax[0].grid(True, alpha=0.3)
+
+# GRAFİK 2: SCATTER PLOT (EZBER KONTROLÜ)
+# Gerçek vs Tahmin (Train ve Test yan yana)
+y_train_pred = best_model.predict(X_train)
+y_test_pred = best_model.predict(X_test)
+
+ax[1].scatter(y_train, y_train_pred, alpha=0.1, color='blue', label='Train Verisi (Bildiği Sorular)')
+ax[1].scatter(y_test, y_test_pred, alpha=0.3, color='orange', label='Test Verisi (Görmediği Sorular)')
+
+# İdeal Çizgi (Tam isabet çizgisi)
+lims = [0, max(y_test.max(), y_train.max())]
+ax[1].plot(lims, lims, 'k-', alpha=0.75, zorder=0)
+ax[1].set_xlabel('Gerçek Fiyat')
+ax[1].set_ylabel('Tahmin Edilen Fiyat')
+ax[1].set_title('Tahmin Tutarlılığı: Train vs Test\n(Noktalar Üst Üste Binmeli)')
+ax[1].legend()
+ax[1].grid(True, alpha=0.3)
+
+plt.tight_layout()
+plt.show()
+
+
+
+import shap
+import matplotlib.pyplot as plt
+
+# =============================================================================
+# ADIM 6.8: SHAP ANALİZİ (MODEL NEDEN BU KARARI VERDİ?)
+# =============================================================================
+print("🕵️‍♂️ SHAP Analizi Başlatılıyor: Modelin Karar Mekanizması Çözülüyor...")
+
+# 1. Explainer (Açıklayıcı) Oluşturma
+# XGBoost ağaç tabanlı olduğu için TreeExplainer kullanıyoruz (Çok hızlıdır)
+explainer = shap.TreeExplainer(best_model)
+
+# 2. SHAP Değerlerini Hesaplama (Test Seti Üzerinde)
+# Not: Eğer X_test çok büyükse (örn: 100.000 satır), burası yavaşlayabilir.
+# Bizim Kasım ayı verimiz az olduğu için sorun yok.
+shap_values = explainer(X_test)
+
+# -----------------------------------------------------------------------------
+# GRAFİK 1: SHAP SUMMARY PLOT (EN ÖNEMLİ VE HAVALI GRAFİK)
+# -----------------------------------------------------------------------------
+# Bu grafik, Feature Importance'ın çok daha gelişmiş halidir.
+# Hangi değişkenin fiyatı artırdığını (Kırmızı) veya düşürdüğünü (Mavi) gösterir.
+
+plt.figure(figsize=(12, 10))
+shap.summary_plot(shap_values, X_test, show=False)
+plt.title("SHAP Özeti: Hangi Özellik Fiyatı Nasıl Etkiliyor?", fontsize=16)
+plt.show()
+
+# -----------------------------------------------------------------------------
+# GRAFİK 2: WATERFALL PLOT (TEK BİR TAHMİNİN HİKAYESİ)
+# -----------------------------------------------------------------------------
+# Örnek: Test setindeki rastgele bir saati (veya en yüksek fiyatlı saati) inceleyelim.
+# Diyelim ki X_test'in 100. satırındaki tahmini merak ediyoruz.
+
+sample_idx = 100  # İstersen burayı değiştirebilirsin (Örn: Pik saati bulup yazabilirsin)
+
+print(f"\n🔍 Örnek İnceleme (Test Seti {sample_idx}. Satır):")
+print(f"   Gerçek Tarih: {dates_test.iloc[sample_idx]}")
+print(f"   Modelin Tahmini: {y_pred[sample_idx]:.2f} TL")
+
+# Waterfall grafiği çiz
+plt.figure(figsize=(10, 6))
+shap.plots.waterfall(shap_values[sample_idx], show=False)
+plt.title(f"Tekil Tahmin Analizi ({dates_test.iloc[sample_idx]})", fontsize=14)
+plt.show()
+
+# -----------------------------------------------------------------------------
+# GRAFİK 3: DEPENDENCE PLOT (İLİŞKİ ANALİZİ)
+# -----------------------------------------------------------------------------
+# Örnek: 'Doğalgaz_Lag24' arttıkça fiyat nasıl değişiyor?
+# Modelin kafasındaki "Doğalgaz vs Fiyat" ilişkisini gösterir.
+
+feature_name = 'Doğalgaz_Lag24' # Merak ettiğin özelliği buraya yaz
+
+if feature_name in X_test.columns:
+    plt.figure(figsize=(10, 6))
+    shap.plots.scatter(shap_values[:, feature_name], color=shap_values, show=False)
+    plt.title(f"Bağımlılık Grafiği: {feature_name} vs Fiyat Etkisi", fontsize=14)
+    plt.show()
+
+
+
+
+
+# =============================================================================
+# ADIM 8: ARALIK 2025 SENARYO TAHMİNİ (RECURSIVE FORECASTING) - DÜZELTİLMİŞ
+# =============================================================================
+print("🔮 Geleceğe Dönüş: Aralık 2025 Tahmini Hazırlanıyor...\n")
+
+# 1. ARALIK AYI İÇİN BOŞ BİR ŞABLON OLUŞTURALIM
+# -----------------------------------------------------------------------------
+# 1 Aralık - 31 Aralık 2025 arası saatlik tarih aralığı
+future_dates = pd.date_range(start='2025-12-01 00:00', end='2025-12-31 23:00', freq='h')
+print(f"📅 Hedef Dönem: {len(future_dates)} Saat ({future_dates.min()} - {future_dates.max()})")
+
+# HATA ÇÖZÜMÜ BURADA:
+# Kasım ayı 720 saat, Aralık 744 saat. 24 saat eksik kalıyor.
+# X_test verisini alıp, eksik kalan kısmı son günden kopyalayarak tamamlıyoruz.
+
+# Önce eldeki Kasım verisini al
+temp_X = X_test.copy()
+
+# Eksik kalan saat sayısını bul (744 - 720 = 24 saat)
+missing_hours = len(future_dates) - len(temp_X)
+
+if missing_hours > 0:
+    print(f"⚠️ Veri boyutu eşitlemesi yapılıyor: {missing_hours} saatlik ek veri ekleniyor...")
+    # Son 'missing_hours' kadar saati alıp ucuna ekle
+    padding = temp_X.iloc[-missing_hours:].copy()
+    future_X = pd.concat([temp_X, padding], axis=0)
+else:
+    # Eğer test seti zaten büyükse sadece son 744 saati al
+    future_X = temp_X.iloc[-len(future_dates):].copy()
+
+# Şimdi boyutlar eşitlendi (744 satır), indeksi güvenle atayabiliriz
+future_X.index = future_dates
+
+# -----------------------------------------------------------------------------
+# KODUN GERİ KALANI AYNEN DEVAM EDİYOR...
+# (Aşağıdaki Feature Update ve Döngü kısımlarını eski koddan aynen kullanabilirsin)
+# -----------------------------------------------------------------------------
+
+if 'Month' in future_X.columns:
+    future_X['Month'] = 12
+
+# Gün ve Saat döngülerini güncelle
+future_X['Day_of_Week'] = future_dates.dayofweek
+future_X['Is_Weekend'] = future_X['Day_of_Week'].isin([5, 6]).astype(int)
+future_X['Saat_Int'] = future_dates.hour
+
+# Trigonometrik dönüşümleri güncelle
+if 'Hour_Sin' in future_X.columns:
+    future_X['Hour_Sin'] = np.sin(2 * np.pi * future_X['Saat_Int'] / 24)
+    future_X['Hour_Cos'] = np.cos(2 * np.pi * future_X['Saat_Int'] / 24)
+if 'Day_Sin' in future_X.columns:
+    future_X['Day_Sin'] = np.sin(2 * np.pi * future_X['Day_of_Week'] / 7)
+    future_X['Day_Cos'] = np.cos(2 * np.pi * future_X['Day_of_Week'] / 7)
+
+# Tatil Günlerini Güncelle
+import holidays
+
+tr_holidays = holidays.TR(years=[2025])
+if 'Is_Holiday' in future_X.columns:
+    future_X['Is_Holiday'] = future_dates.to_series().apply(lambda x: 1 if x in tr_holidays else 0)
+
+print("✅ Tarih ve Takvim verileri Aralık ayına göre güncellendi.")
+
+# ... BURADAN SONRASI ESKİ KODUN AYNISI (Döngü ve Görselleştirme) ...
+future_preds = []
+# Başlangıç için son bilinen gerçek fiyatlar (Kasım sonu)
+last_known_prices = y_test.iloc[-168:].values.tolist()
+
+print("⏳ Simülasyon Başlıyor (744 Saat tek tek işleniyor)...")
+
+for i in range(len(future_X)):
+    current_row = future_X.iloc[[i]].copy()
+
+    if 'PTF_Lag_24' in current_row.columns:
+        current_row['PTF_Lag_24'] = last_known_prices[-24]
+    if 'PTF_Lag_168' in current_row.columns:
+        current_row['PTF_Lag_168'] = last_known_prices[-168]
+    if 'PTF_Roll_Mean_24' in current_row.columns:
+        current_row['PTF_Roll_Mean_24'] = np.mean(last_known_prices[-24:])
+    if 'Relative_Price_Pos' in current_row.columns:
+        roll_168 = np.mean(last_known_prices[-168:])
+        current_row['Relative_Price_Pos'] = (current_row['PTF_Lag_24'] - roll_168) / (roll_168 + 1)
+    if 'Price_Momentum' in current_row.columns:
+        current_row['Price_Momentum'] = current_row['PTF_Lag_24'] - current_row['PTF_Lag_168']
+
+    pred = best_model.predict(current_row)[0]
+    pred = max(0, pred)
+    future_preds.append(pred)
+    last_known_prices.append(pred)
+
+print("✅ Aralık ayı tahmini tamamlandı.")
+
+# Görselleştirme
+df_forecast = pd.DataFrame({'Tahmin_Aralik': future_preds}, index=future_dates)
+
+plt.figure(figsize=(16, 6))
+plt.plot(y_test.index[-168:], y_test.iloc[-168:], label='Gerçekleşen (Kasım Sonu)', color='navy', alpha=0.5)
+plt.plot(df_forecast.index, df_forecast['Tahmin_Aralik'], label='Forecast (Aralık 2025)', color='red', linestyle='-',
+         linewidth=1.5)
+mean_val = df_forecast['Tahmin_Aralik'].mean()
+plt.axhline(mean_val, color='green', linestyle='--', label=f'Aralık Ort: {mean_val:.0f} TL')
+plt.title('Aralık 2025: Gelecek Fiyat Tahmin Senaryosu (Forecast)', fontsize=14)
+plt.ylabel('PTF (TL/MWH)')
+plt.legend()
+plt.grid(True, alpha=0.3)
+plt.show()
+
+print(f"\n📢 Aralık 2025 Tahmin Özeti:")
+print(f"   Min Fiyat: {df_forecast['Tahmin_Aralik'].min():.2f} TL")
+print(f"   Max Fiyat: {df_forecast['Tahmin_Aralik'].max():.2f} TL")
+print(f"   Ort Fiyat: {df_forecast['Tahmin_Aralik'].mean():.2f} TL")
