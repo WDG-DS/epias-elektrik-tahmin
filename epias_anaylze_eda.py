@@ -1614,6 +1614,188 @@ else:
 
 
 
+#======================================================================================================
+#======================================================================================================
+#======================================================================================================
+
+import numpy as np
+import pandas as pd
+import matplotlib.pyplot as plt
+from sklearn.metrics import mean_squared_error, mean_absolute_error
+import warnings
+
+# Uyarıları kapatalım
+warnings.filterwarnings("ignore")
+
+
+def run_reliability_tests(model, X_full, y_full, date_series, feature_names):
+    print("\n" + "=" * 50)
+    print("🛡️ MODEL GÜVENİLİRLİK VE ROBUSTNESS RAPORU")
+    print("=" * 50)
+
+    # -------------------------------------------------------------------------
+    # TEST 1: BACKTESTING (MEVSİMSEL DAYANIKLILIK TESTİ)
+    # Model sadece Kasım'da mı iyi, yoksa Yazın (Temmuz) ve Baharda (Nisan) da çalışıyor mu?
+    # -------------------------------------------------------------------------
+    print("\n🧪 TEST 1: BACKTESTING (Mevsimsel Kontrol)")
+    print("-" * 40)
+
+    test_periods = [
+        ("🌸 İlkbahar (Nisan 2025)", '2025-04-01', '2025-04-30'),
+        ("☀️ Yaz Zirvesi (Temmuz 2025)", '2025-07-01', '2025-07-31'),
+        ("🍂 Sonbahar/Test (Kasım 2025)", '2025-11-01', '2025-11-30')
+    ]
+
+    for label, start_date, end_date in test_periods:
+        # Tarih maskesi oluştur
+        mask = (date_series >= start_date) & (date_series <= end_date)
+
+        if mask.sum() == 0:
+            print(f"⚠️ {label}: Veri bulunamadı!")
+            continue
+
+        X_period = X_full.loc[mask]
+        y_period = y_full.loc[mask]
+
+        # Tahmin
+        preds = model.predict(X_period)
+        preds = np.maximum(preds, 0)
+
+        # Metrikler
+        rmse_period = np.sqrt(mean_squared_error(y_period, preds))
+        mape_period = np.mean(np.abs((y_period - preds) / (y_period + 1))) * 100  # +1 sıfıra bölme hatası için
+
+        print(f"📅 {label:<30} | RMSE: {rmse_period:.2f} TL | MAPE: %{mape_period:.2f}")
+
+    print(
+        "\n✅ YORUM: Eğer MAPE değerleri birbirine yakınsa (%15-25 bandı), model mevsimsellikten etkilenmiyor demektir.")
+
+    # -------------------------------------------------------------------------
+    # TEST 2: SENSITIVITY ANALYSIS (DUYARLILIK ANALİZİ)
+    # Yük Tahmini veya Dolar %10 artarsa model nasıl tepki veriyor?
+    # -------------------------------------------------------------------------
+    print("\n🧪 TEST 2: SENSITIVITY (Duyarlılık Analizi)")
+    print("-" * 40)
+
+    # Test için Kasım ayını baz alalım (En güncel)
+    mask_nov = (date_series >= '2025-11-01') & (date_series <= '2025-11-30')
+    X_test_sample = X_full.loc[mask_nov].copy()
+    base_preds = model.predict(X_test_sample)
+    base_mean = np.mean(base_preds)
+
+    # Değiştirilecek Kritik Kolonlar (Veri setinde varsa)
+    target_cols = ['Yük Tahmin Planı (MWh)', 'Dolar_Kuru', 'Doğalgaz_Lag24']
+
+    for col in target_cols:
+        if col in X_test_sample.columns:
+            # Senaryo: Değişkeni %10 artır (Ceteris Paribus - Diğer her şey sabit)
+            X_shocked = X_test_sample.copy()
+            X_shocked[col] = X_shocked[col] * 1.10
+
+            shocked_preds = model.predict(X_shocked)
+            shocked_mean = np.mean(shocked_preds)
+
+            change_pct = ((shocked_mean - base_mean) / base_mean) * 100
+
+            # Yön kontrolü (Mantık testi)
+            direction = "⬆️ Artış" if change_pct > 0 else "⬇️ Düşüş"
+            logic = "✅ Mantıklı" if change_pct > 0 else "❓ İlginç"  # Genelde bu kalemler artınca fiyat artmalı
+
+            print(f"📊 {col:<25} (+%10) -> Fiyat Etkisi: %{change_pct:+.2f} ({direction}) {logic}")
+        else:
+            print(f"⚠️ {col} sütunu bulunamadı, atlanıyor.")
+
+    # -------------------------------------------------------------------------
+    # TEST 3: SCENARIO ANALYSIS (EKSTREM DURUM TESTİ)
+    # Model "Kıyamet Senaryosu"nda ne yapıyor?
+    # -------------------------------------------------------------------------
+    print("\n🧪 TEST 3: SCENARIO ANALYSIS (Stres Testi)")
+    print("-" * 40)
+
+    # Ortalama bir satır alıp sadece ilgilendiğimiz değerleri değiştireceğiz
+    base_row = X_full.mean().to_frame().T
+
+    # Senaryo: KIŞ GECESİ KABUSU (Yüksek Yük, Düşük Rüzgar, Pahalı Gaz)
+    nightmare_row = base_row.copy()
+    if 'Yük Tahmin Planı (MWh)' in base_row.columns: nightmare_row['Yük Tahmin Planı (MWh)'] = 50000  # Çok yüksek
+    if 'Rüzgar_Lag24' in base_row.columns: nightmare_row['Rüzgar_Lag24'] = 100  # Yok denecek kadar az
+    if 'Doğalgaz_Lag24' in base_row.columns: nightmare_row['Doğalgaz_Lag24'] = 15000  # Gaz tüketimi tavan
+
+    # Senaryo: BAHAR BAYRAMI (Düşük Yük, Yüksek Yenilenebilir)
+    paradise_row = base_row.copy()
+    if 'Yük Tahmin Planı (MWh)' in base_row.columns: paradise_row['Yük Tahmin Planı (MWh)'] = 20000  # Çok düşük
+    if 'Rüzgar_Lag24' in base_row.columns: paradise_row['Rüzgar_Lag24'] = 8000  # Fırtına gibi
+    if 'Güneş_Lag24' in base_row.columns: paradise_row['Güneş_Lag24'] = 5000  # Full güneş
+
+    pred_nightmare = model.predict(nightmare_row)[0]
+    pred_paradise = model.predict(paradise_row)[0]
+
+    print(f"🔥 Kabus Senaryosu (Yüksek Talep/Az Rüzgar): {pred_nightmare:.2f} TL")
+    print(f"🌼 Cennet Senaryosu (Düşük Talep/Bol Güneş):  {pred_paradise:.2f} TL")
+
+    if pred_nightmare > pred_paradise * 1.5:
+        print("✅ SONUÇ: Model piyasa fizik kurallarını kavramış. Kıtlıkta fiyatı uçuruyor.")
+    else:
+        print("⚠️ SONUÇ: Model ekstrem durumlara yeterince sert tepki vermiyor.")
+
+    # -------------------------------------------------------------------------
+    # TEST 4: CONFIDENCE INTERVALS (GÜVEN ARALIĞI GÖRSELLEŞTİRME)
+    # Tahminlerimiz ne kadar güvenilir?
+    # -------------------------------------------------------------------------
+    print("\n🧪 TEST 4: GÜVEN ARALIĞI (Son 1 Hafta)")
+    print("-" * 40)
+
+    # Test setindeki son 168 saati (1 hafta) alalım
+    last_week_mask = (date_series >= '2025-11-24') & (date_series <= '2025-11-30')
+    X_viz = X_full.loc[last_week_mask]
+    y_viz = y_full.loc[last_week_mask]
+    dates_viz = date_series.loc[last_week_mask]
+
+    preds_viz = model.predict(X_viz)
+
+    # Modelin genel RMSE'si (Bunu test setinden biliyoruz, buraya manuel veya hesapla girebilirsin)
+    # Senin son sonucun 452 TL idi.
+    model_rmse = 452.91
+    confidence_interval = 1.96 * model_rmse  # %95 Güven Aralığı
+
+    lower_bound = preds_viz - confidence_interval
+    upper_bound = preds_viz + confidence_interval
+    lower_bound = np.maximum(lower_bound, 0)  # Fiyat eksi olamaz
+
+    plt.figure(figsize=(15, 7))
+    plt.plot(dates_viz, y_viz, label='Gerçekleşen', color='black', linewidth=2)
+    plt.plot(dates_viz, preds_viz, label='Tahmin', color='blue', linestyle='--')
+
+    # Güven aralığını boya
+    plt.fill_between(dates_viz, lower_bound, upper_bound, color='blue', alpha=0.2,
+                     label='%95 Güven Aralığı (+/- 887 TL)')
+
+    plt.title('Model Güvenilirlik Bandı (Son 1 Hafta)', fontsize=14)
+    plt.ylabel('PTF (TL/MWh)')
+    plt.legend()
+    plt.grid(True, alpha=0.3)
+    plt.show()
+
+    print("✅ Grafik çizildi. Mavi alan, modelin 'Fiyat %95 ihtimalle buradadır' dediği alandır.")
+    print("   Eğer Siyah çizgi (Gerçek) bu mavi alanın dışına çok çıkmıyorsa, model güvenilirdir.")
+
+
+# -----------------------------------------------------------------------------
+# SCRİPTİ ÇALIŞTIRMA KOMUTU
+# -----------------------------------------------------------------------------
+# Bu fonksiyonu çağırmak için gerekli değişkenleri veriyoruz.
+# Not: 'dates' değişkeni senin scriptinde 'df_final['Tarih']' veya 'dates' olarak geçiyor olabilir.
+
+# X ve y'nin pandas DataFrame/Series formatında olduğundan emin olalım (X_train/X_test değil, tüm veri)
+# Analiz için tüm veriyi (X ve y) birleştirmemiz gerekebilir veya doğrudan df_final kullanabiliriz.
+# Senin scriptinde X ve y zaten df_final'dan oluşturulmuştu.
+
+run_reliability_tests(best_model, X, y, df_final['Tarih'], X.columns)
+
+#======================================================================================================
+#======================================================================================================
+
+
 
 
 
