@@ -1914,3 +1914,35 @@ tahmin = tahmin_motoru(
 print(f"\n📅 Tarih: {tarih_ornek}")
 print(f"⚡ Yapay Zeka Tahmini: {tahmin:.2f} TL/MWh")
 print("\n✅ PROJE BAŞARIYLA TAMAMLANDI! Geçmiş olsun. ☕️")
+
+# =============================================================================
+# EKSTRA: MODELİ KAYDETME (PKL OLUŞTURMA)
+# =============================================================================
+import joblib
+import os
+
+print("\n💾 MODEL KAYIT İŞLEMİ BAŞLATILIYOR...")
+
+# 1. Klasör Yoksa Oluştur
+if not os.path.exists('models'):
+    os.makedirs('models')
+
+# 2. Farklı Bir İsim Belirle (Karışmasın Diye)
+# Pipeline'dan çıkan 'epias_model_final.pkl' idi.
+# Bu analizden çıkan 'epias_model_orijinal_analiz.pkl' olsun.
+filename = 'epias_model_orijinal_analiz.pkl'
+save_path = os.path.join('models', filename)
+
+# 3. Paketi Hazırla
+# Modelin tekrar çalışabilmesi için özellik listesini (feature names) de içine koyuyoruz.
+model_package = {
+    'model': best_model,             # Eğitilmiş XGBoost modeli
+    'features': X.columns.tolist(),  # Hangi sütunları kullandığımız
+    'best_params': random_search.best_params_, # Hangi ayarları seçtiği
+    'description': 'epias_analiz_guncel.py dosyasından üretilen orijinal model.'
+}
+
+# 4. Kaydet
+joblib.dump(model_package, save_path)
+
+print(f"✅ Şampiyon Model Başarıyla Kaydedildi: {save_path}")

@@ -71,7 +71,7 @@ st.markdown("""
 # -----------------------------------------------------------------------------
 @st.cache_resource
 def load_engine():
-    model_path = os.path.join('models', 'epias_model_final.pkl')
+    model_path = os.path.join('models', 'epias_model_orijinal_analiz.pkl')
     data_path = os.path.join('data_s', 'data_set_ex.xlsx')
 
     try:
@@ -190,13 +190,18 @@ with st.sidebar:
 # 5. ANA EKRAN VE GÖRSELLEŞTİRME
 # -----------------------------------------------------------------------------
 # Başlık
-col_logo, col_head = st.columns([1, 10])
+col_logo, col_head, col_sag_logo = st.columns([2, 8, 2])
 with col_logo:
     st.image(
         "foto/epias.jpg",
         width=50)
 with col_head:
     st.title("EPİAŞ Pro Terminal")
+
+with col_sag_logo:
+    # Buraya sağdaki fotonun yolunu yaz. (Örn: "foto/profil.jpg" veya şirket logosu)
+    # Şimdilik örnek bir 'Trader' ikonu koyuyorum, sen kendi dosya yolunla değiştir.
+    st.image("foto/logo.png", width=90)
 
 # --- HESAPLAMA MOTORU ---
 # (Her zaman çalışır, butona basılınca güncellenir veya ilk açılışta otomatiktir)
