@@ -1,3 +1,34 @@
+"""
+=============================================================================
+PROJE: EPİAŞ PTF Tahmin Paneli -  PİYASA TAKAS FİYATI TAHMİNİ
+=============================================================================
+GELİŞTİRİCİLER: WDG EKİBİ
+
+
+[PROJE MİMARİSİ VE DOSYA YAPISI HAKKINDA BİLGİLENDİRME]
+Bu sistem normal şartlarda modüler bir yapıda çalışmaktadır ve aşağıdaki
+bileşenlerden oluşur:
+
+1. EPIAS_ANALIZ_MAIN.py (Şu an incelediğiniz dosya):
+   - Veri ön işleme, temizlik ve Feature Engineering (Lag, Rolling, Mevsimsellik).
+   - XGBoost modelinin eğitimi ve hiperparametre optimizasyonu.
+   - İstatistiksel testler (ADF Durağanlık, Normallik testleri).
+   - Modelin .pkl formatında dışa aktarılması.
+   - Projenin "Algoritmik Beyni" burasıdır.
+
+2. APP.py (Streamlit Arayüzü - Teslim Paketinde Mevcut Değilse):
+   - Eğitilen modeli kullanarak canlı simülasyon yapan kullanıcı arayüzü.
+   - Traderlar için 'What-If' senaryo analizleri ve görselleştirme terminali.
+
+3. DATA (Veri Setleri):
+   - KGUP, PTF ve Dışsal faktörlerin bulunduğu veri havuzu.
+
+[BU DOSYANIN İŞLEVİ]
+Bu kod çalıştırıldığında; ham veriyi işler, modeli sıfırdan eğitir,
+başarım metriklerini (RMSE, R2) hesaplar ve analiz grafiklerini üretir.
+=============================================================================
+"""
+
 import locale
 import datetime
 from statistics import quantiles
