@@ -46,8 +46,8 @@ Test veri seti üzerinde elde edilen model performansı aşağıdadır:
 > **Analiz:** Model, özellikle volatilite'nin düşük olduğu saatlerde %95+ doğrulukla tahmin yapabilmektedir. 
 
 ### 📈 Tahmin vs Gerçekleşen (Actual vs Predicted)
-*(Buraya projenin çıktısı olan bir grafiğin ekran görüntüsünü -screenshot- koymalısın. Görselsiz README olmaz. `![FORECASTINH](https://github.com/user-attachments/assets/5b7b6e60-1b15-4bbf-9490-d9550bb5aa9a)
-` formatında ekle)*
+ ![FORECASTINH](https://github.com/user-attachments/assets/5b7b6e60-1b15-4bbf-9490-d9550bb5aa9a)
+ 
 
 ## 🚀 Kurulum ve Kullanım
 
