@@ -67,7 +67,7 @@ Projeyi lokalinizde çalıştırmak için:
     ```
 
 ## 👥 Takım
-* [Kadir](https://github.com/kad1r-cbn)
+* [Kadir Çoban ](https://github.com/kad1r-cbn)
 * [Abdullah Gönül ](https://github.com/apognl)
 * [Bilgi Gülçin Sönmez ](https://github.com/bilgigulcinsonmez-dev)
 * [Züleyha Erdoğan ](https://github.com/zuleyha-erdogan)
